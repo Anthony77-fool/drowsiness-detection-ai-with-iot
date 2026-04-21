@@ -4,6 +4,12 @@ import numpy as np
 import cv2
 from ultralytics import YOLO
 import time  # Essential for measuring actual seconds
+import requests #essential for the talk between software and hardware
+
+# --- CONFIGURATION ---
+# Replace with the IP address printed in your Arduino Serial Monitor
+ESP32_IP = "http://192.168.43.100" 
+model = YOLO('best_v3_1.pt')
 
 # Load a pretrained YOLOv8 small model
 model = YOLO('best_v3_1.pt') 
@@ -15,6 +21,7 @@ model.info()
 closed_start_time = None
 status = "AWAKE"
 color = (0, 255, 0)  # Green for Awake
+alert_sent = False
 
 # Video capture (0) is my webcam port number
 cap = cv2.VideoCapture(0)
@@ -44,6 +51,15 @@ while cap.isOpened():
         if elapsed >= 5.0:
             status = "SLEEPING"
             color = (0, 0, 255)  # Red
+            # --- HARDWARE TRIGGER ---
+            if not alert_sent:
+                try:
+                    requests.get(f"{ESP32_IP}/alert", timeout=0.5)
+                    alert_sent = True
+                    print("SENT STOP COMMAND")
+                except:
+                    print("WiFi Connection Error")
+
         elif elapsed >= 2.0:
             status = "MILD DROWSINESS"
             color = (0, 255, 255)  # Yellow
@@ -51,10 +67,19 @@ while cap.isOpened():
             status = "BLINKING/ACTIVE"
             color = (0, 255, 0) # Green
     else:
+        # If we were previously in an alert state, tell the car to resume
+        if alert_sent:
+            try:
+                requests.get(f"{ESP32_IP}/reset", timeout=0.5)
+                print("SENT RESUME COMMAND")
+            except:
+                pass # Silently fail if WiFi is jittery
+
         # Reset if eyes are open (Class 1) or no eyes detected
         closed_start_time = None
         status = "AWAKE"
         color = (0, 255, 0)
+        alert_sent = False # Reset the flag
 
     # 2. PLOT THE RESULTS
     annotated_frame = results_webcam[0].plot()
