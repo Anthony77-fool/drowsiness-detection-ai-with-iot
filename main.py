@@ -63,6 +63,10 @@ while cap.isOpened():
         elif elapsed >= 2.0:
             status = "MILD DROWSINESS"
             color = (0, 255, 255)  # Yellow
+            #send to the http (hardware about mild)
+            if status == "MILD DROWSINESS" and not alert_sent:
+                try: requests.get(f"{ESP32_IP}/mild", timeout=0.5)
+                except: print("WiFi Error")
         else:
             status = "BLINKING/ACTIVE"
             color = (0, 255, 0) # Green
