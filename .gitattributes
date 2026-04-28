@@ -1,7 +1,9 @@
-# Force both languages to be detectable and treated as primary
-*.cpp linguist-detectable=true
-*.py linguist-detectable=true
+# Tell GitHub that C++ files are "Generated" or "Vendored" 
+# This lowers their priority on the pinned card display
+*.cpp linguist-vendored
+*.h linguist-vendored
+*.hpp linguist-vendored
+*.ino linguist-vendored
 
-# Optional: If you have large C++ libraries or assets (like a 'vendor' or 'lib' folder) 
-# that are making the C++ percentage too high, hide them from the stats:
-# path/to/library/* linguist-vendored
+# Ensure Python is treated as the primary detectable language
+*.py linguist-detectable=true
