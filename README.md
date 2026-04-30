@@ -19,7 +19,7 @@
 
 ### 🚨 Emergency Stop Trigger
 <p align="center">
-  <img src="https://via.placeholder.com/800x400?text=Insert+ESP32+Response+GIF+Here" alt="demo2"/>
+  <img src="https://via.placeholder.com/800x400?text=Insert+ESP32+Response+GIF+Here](https://sabadomarckanthonyportfoliov1.netlify.app/projects/drowsiness-img1.webp" alt="demo2"/>
 </p>
 
 > ⚠️ Replace the placeholders above with your actual demo GIFs (drag & drop into GitHub or use `/assets/demo.gif`)
