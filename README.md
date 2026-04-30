@@ -8,24 +8,6 @@
   <img src="https://img.shields.io/badge/Status-Completed-success?style=for-the-badge" />
 </p>
 
----
-
-## 🎥 Demo Showcase
-
-### 📌 System Demo (Real-Time Detection)
-<p align="center">
-  <img src="https://via.placeholder.com/800x400?text=Insert+YOLO+Detection+GIF+Here" alt="demo1"/>
-</p>
-
-### 🚨 Emergency Stop Trigger
-<p align="center">
-  <img src="https://via.placeholder.com/800x400?text=Insert+ESP32+Response+GIF+Here](https://sabadomarckanthonyportfoliov1.netlify.app/projects/drowsiness-img1.webp" alt="demo2"/>
-</p>
-
-> ⚠️ Replace the placeholders above with your actual demo GIFs (drag & drop into GitHub or use `/assets/demo.gif`)
-
----
-
 ## 📝 Project Overview
 
 **Eye-O-T Pilot** is an Edge AI monitoring system designed to detect and intervene during driver fatigue events in real-time. The system uses a custom-trained **YOLOv11 Nano** model to analyze ocular states and applies temporal logic to categorize risk levels.
