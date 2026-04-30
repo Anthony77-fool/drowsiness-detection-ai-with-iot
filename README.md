@@ -161,7 +161,7 @@ pip install ultralytics opencv-python torch numpy
 
 ## 👥 Team
 
-- Marck Anthony Sabado  
+- Marck Anthony Sabado  (Team Leader | Edge AI & IoT Systems Engineer)
 - Sakira Julian  
 - Mark Angel Manzanillo  
 - Jazel Marithe Vintero  
