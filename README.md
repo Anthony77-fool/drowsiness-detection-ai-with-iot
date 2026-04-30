@@ -159,15 +159,6 @@ pip install ultralytics opencv-python torch numpy
 
 ---
 
-## 👥 Team
-
-- Marck Anthony Sabado  (Team Leader | Edge AI & IoT Systems Engineer)
-- Sakira Julian  
-- Mark Angel Manzanillo  
-- Jazel Marithe Vintero  
-
----
-
 ## 📌 Project Insight
 
 > “When milliseconds matter, the cloud is too far.”
