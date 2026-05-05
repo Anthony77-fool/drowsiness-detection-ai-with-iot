@@ -1,25 +1,23 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include "HardwareSerial.h"
 #include "DFRobotDFPlayerMini.h"
 
-//for MP3
-#define RX_PIN 27 
-#define TX_PIN 26 
-HardwareSerial mySerial(1); 
-DFRobotDFPlayerMini myDFPlayer;
+// --- OLED CONFIGURATION ---
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// --- DATA for MP3 ---
-int fileNumbers[] = {1, 2, 3, 4, 5, 6};
-String fileNames[] = {
-  "0001_wake_up_alert",
-  "0002_engine_restarted",
-  "0003_emergency_engine_shutdown",
-  "0004_please_wake_up",
-  "0005_waiting_for_network_connection",
-  "0006_welcome_back"
-};
+// --- MP3 CONFIGURATION ---
+// IMPORTANT: ESP32 RX_PIN connects to DFPlayer TX | TX_PIN connects to 1k resistor -> DFPlayer RX
+#define RX_PIN 26 
+#define TX_PIN 27 
+HardwareSerial mySerial(2); // Using UART2
+DFRobotDFPlayerMini myDFPlayer;
 
 // --- WiFi Credentials ---
 const char* ssid = "Gafi3"; 
@@ -33,23 +31,23 @@ IPAddress subnet(255, 255, 255, 0);
 // --- Pin Definitions ---
 const int IN1 = 18; 
 const int IN2 = 19;
-const int IN3 = 22;
-const int IN4 = 23;
+const int IN3 = 25; 
+const int IN4 = 33; 
 
 const int RED_LED = 13;
 const int YEL_LED = 12;
 const int GRN_LED = 14;
 
 // --- State Variables ---
-int drowsyLevel = 0; // 0 = Awake, 1 = Mild, 2 = Danger
+int drowsyLevel = 3; // Start at 3 (Connecting)
 unsigned long lastBlinkTime = 0;
 bool blinkState = false;
-const int blinkInterval = 500; // Blink speed in milliseconds
+const int blinkInterval = 500; 
 
 // --- Audio Sequencing Variables ---
 int dangerSequenceStep = 0;
 unsigned long lastAudioTime = 0;
-bool welcomePlayed = true; // Set to true initially so it doesn't play on startup
+bool welcomePlayed = true; 
 
 WebServer server(80);
 
@@ -57,28 +55,43 @@ WebServer server(80);
 void handleDrowsyAlert();
 void handleMildAlert();
 void handleReset();
-void handleAudioSequencing(); // Added for the logic fix
+void handleAudioSequencing();
+void updateOLED(int state);
 
 void setup() {
   Serial.begin(115200);
+  delay(1000); // Wait for Serial Monitor to catch up
 
-  // Initialize Motor Pins
+  // 1. Initialize OLED (Low Power)
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("OLED failed"));
+  }
+  updateOLED(3); // Show "Connecting" face
+
+  // 2. Initialize Hardware Pins
   pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
-  
-  // Initialize Traffic Light Pins
-  pinMode(RED_LED, OUTPUT);
-  pinMode(YEL_LED, OUTPUT);
-  pinMode(GRN_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT); pinMode(YEL_LED, OUTPUT); pinMode(GRN_LED, OUTPUT);
 
-  // Initialize MP3
+  // 3. Initialize MP3 (STAGGERED START)
+  // We do this BEFORE WiFi to avoid power spikes
+  Serial.println(F("Initializing MP3..."));
   mySerial.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
-  if (myDFPlayer.begin(mySerial, false, false)) { // isACK=false for better stability
-    myDFPlayer.volume(15); 
-    Serial.println(F("DFPlayer Online"));
+  delay(2000); // CRITICAL: Give the DFPlayer time to wake up before communicating
+
+  if (myDFPlayer.begin(mySerial, true, true)) { 
+    Serial.println(F("✅ DFPlayer Online"));
+    myDFPlayer.volume(10); // KEEP VOLUME LOW (8-12) because you have no capacitor
+    delay(500);
+    myDFPlayer.stop();
+  } else {
+    Serial.println(F("❌ DFPlayer NOT detected. Check wiring/SD card."));
+    // We don't use while(true) here so the rest of the car still works
   }
 
-  // WiFi Configuration
+  // 4. WiFi Configuration (THE HEAVY LIFTER)
+  // We do this last because it draws the most current
+  delay(1000); 
   if (!WiFi.config(local_IP, gateway, subnet)) {
     Serial.println("STA Failed to configure");
   }
@@ -92,87 +105,119 @@ void setup() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConnected!");
-    Serial.println(WiFi.localIP());
+    Serial.println("\n✅ WiFi Connected!");
+    drowsyLevel = 0; // Set to Awake
+    updateOLED(0); 
+  } else {
+    Serial.println("\n⚠️ WiFi Timeout - Running offline mode");
+    drowsyLevel = 0;
   }
 
   if (MDNS.begin("sentinel")) {
     Serial.println("MDNS started");
   }
 
-  // Web Server Routes
-  server.on("/alert", handleDrowsyAlert); // Red Blink + Stop
-  server.on("/mild", handleMildAlert);   // Yellow Blink + Drive
-  server.on("/reset", handleReset);       // Green Solid + Drive
+  server.on("/alert", handleDrowsyAlert); 
+  server.on("/mild", handleMildAlert);   
+  server.on("/reset", handleReset);      
   server.begin();
+  
+  Serial.println("System Ready!");
 }
 
 void loop() {
   server.handleClient();
 
-  // Timer for blinking (Non-blocking)
+  // Timer for blinking LEDs
   if (millis() - lastBlinkTime >= blinkInterval) {
     lastBlinkTime = millis();
     blinkState = !blinkState;
   }
 
-  // --- AUDIO LOGIC ---
   handleAudioSequencing();
 
-  // --- BRAIN OF THE SYSTEM ---
+  // --- BRAIN: Control Motors, LEDs, and OLED ---
   if (drowsyLevel == 0) { 
-    // AWAKE: Green Stable, Motors Driving
+    // AWAKE: Motors ON, Green LED ON
     digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
     digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
-    
-    digitalWrite(GRN_LED, HIGH);
-    digitalWrite(YEL_LED, LOW);
-    digitalWrite(RED_LED, LOW);
+    digitalWrite(GRN_LED, HIGH); digitalWrite(YEL_LED, LOW); digitalWrite(RED_LED, LOW);
+    updateOLED(0); 
   } 
   else if (drowsyLevel == 1) { 
-    // MILD: Yellow Blinking, Motors Driving (Warning)
+    // MILD: Motors ON, Yellow LED Blinking
     digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
     digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
-
-    digitalWrite(GRN_LED, LOW);
-    digitalWrite(YEL_LED, blinkState); // Uses the timer state
-    digitalWrite(RED_LED, LOW);
+    digitalWrite(GRN_LED, LOW); digitalWrite(YEL_LED, blinkState); digitalWrite(RED_LED, LOW);
+    updateOLED(1);
   } 
   else if (drowsyLevel == 2) { 
-    // DANGER: Red Blinking, Motors Stopped
+    // DANGER: Motors STOP, Red LED Blinking
     digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
     digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
-
-    digitalWrite(GRN_LED, LOW);
-    digitalWrite(YEL_LED, LOW);
-    digitalWrite(RED_LED, blinkState); // Uses the timer state
+    digitalWrite(GRN_LED, LOW); digitalWrite(YEL_LED, LOW); digitalWrite(RED_LED, blinkState);
+    updateOLED(2);
   }
 }
 
-// --- Logic for MP3 Sequencing ---
+void updateOLED(int state) {
+  static int lastState = -1;
+  if (state == lastState) return; 
+  lastState = state;
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  if (state == 0) { // AWAKE
+    display.fillCircle(40, 30, 15, SSD1306_WHITE);
+    display.fillCircle(88, 30, 15, SSD1306_WHITE);
+    display.drawRoundRect(54, 50, 20, 5, 2, SSD1306_WHITE);
+  } 
+  else if (state == 1) { // MILD
+    display.fillRect(25, 30, 30, 8, SSD1306_WHITE);
+    display.fillRect(73, 30, 30, 8, SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(45, 50);
+    display.print("TIRED...");
+  } 
+  else if (state == 2) { // DANGER
+    display.setTextSize(4);
+    display.setCursor(30, 20); display.print("X");
+    display.setCursor(78, 20); display.print("X");
+  }
+  else if (state == 3) { // CONNECTING
+    display.drawCircle(40, 30, 10, SSD1306_WHITE);
+    display.drawCircle(88, 30, 10, SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(20, 50);
+    display.print("CONNECTING...");
+  }
+  display.display();
+}
+
 void handleAudioSequencing() {
-  // Danger Logic: 1-3 then loop 1-4
   if (drowsyLevel == 2) {
     welcomePlayed = false; 
-    if (millis() - lastAudioTime > 4000) { // Adjust 4000ms based on audio length
+    // Play danger audio every 4 seconds
+    if (millis() - lastAudioTime > 4000) {
       lastAudioTime = millis();
-      if (dangerSequenceStep == 0)      { myDFPlayer.play(1); dangerSequenceStep = 1; }
-      else if (dangerSequenceStep == 1) { myDFPlayer.play(3); dangerSequenceStep = 2; }
-      else if (dangerSequenceStep == 2) { myDFPlayer.play(1); dangerSequenceStep = 3; } // Loop Start
-      else if (dangerSequenceStep == 3) { myDFPlayer.play(4); dangerSequenceStep = 2; } // Loop Back
+      if (dangerSequenceStep == 0)      { myDFPlayer.playMp3Folder(1); dangerSequenceStep = 1; }
+      else if (dangerSequenceStep == 1) { myDFPlayer.playMp3Folder(3); dangerSequenceStep = 2; }
+      else if (dangerSequenceStep == 2) { myDFPlayer.playMp3Folder(1); dangerSequenceStep = 3; } 
+      else if (dangerSequenceStep == 3) { myDFPlayer.playMp3Folder(4); dangerSequenceStep = 2; } 
     }
   } 
-  // Reset Logic: 6 then 2 once
   else if (drowsyLevel == 0 && !welcomePlayed) {
     static int resetStep = 0;
+    // Play recovery audio
     if (millis() - lastAudioTime > 4000) {
       if (resetStep == 0) { 
-        myDFPlayer.play(6); 
+        myDFPlayer.playMp3Folder(6); 
         lastAudioTime = millis(); 
         resetStep = 1; 
       }
       else if (resetStep == 1) { 
-        myDFPlayer.play(2); 
+        myDFPlayer.playMp3Folder(2); 
         welcomePlayed = true; 
         resetStep = 0; 
       }
@@ -180,29 +225,26 @@ void handleAudioSequencing() {
   }
 }
 
-// --- Handler Functions ---
 void handleDrowsyAlert() {
   if (drowsyLevel != 2) {
     Serial.println("!!! DANGER ALERT !!!");
     drowsyLevel = 2;
-    dangerSequenceStep = 0; // Restart sequence from 1-3
-    lastAudioTime = 0;      // Play immediately
+    dangerSequenceStep = 0; 
+    lastAudioTime = 0;          
   }
-  server.send(200, "text/plain", "Danger Mode: Stopped");
+  server.send(200, "text/plain", "Danger Mode");
 }
 
 void handleMildAlert() {
-  Serial.println("Warning: Mild Drowsiness");
   drowsyLevel = 1;
-  server.send(200, "text/plain", "Mild Mode: Warning");
+  server.send(200, "text/plain", "Mild Mode");
 }
 
 void handleReset() {
   if (drowsyLevel != 0) {
-    Serial.println("System Reset: Awake");
     drowsyLevel = 0;
-    welcomePlayed = false; // Trigger welcome audio
-    lastAudioTime = 0;     // Play immediately
+    welcomePlayed = false; 
+    lastAudioTime = 0;     
   }
-  server.send(200, "text/plain", "Normal Mode: Resumed");
+  server.send(200, "text/plain", "System Reset");
 }
